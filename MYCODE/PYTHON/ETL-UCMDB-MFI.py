@@ -15,7 +15,7 @@ import json
 import sys
 import pandas as pd
 import time
-#To get date & time
+#To get date & time of the server
 timert = time.strftime("%Y-%m-%d-%H-%M-%S")
 #To get arguments and check the arguments
 #if len(sys.argv) >= 2:
