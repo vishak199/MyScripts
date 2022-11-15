@@ -15,7 +15,7 @@ import json
 import sys
 import pandas as pd
 import time
-#To get date & time of the server
+#To get date & time of the server 
 timert = time.strftime("%Y-%m-%d-%H-%M-%S")
 #To get arguments and check the arguments
 #if len(sys.argv) >= 2:
@@ -44,7 +44,9 @@ except json.decoder.JSONDecodeError:
         print("String could not be converted to JSON")
         sys.exit(1)
 #creating empty lists 
-list1= []; list2 = []; list3 =[]
+list1= []
+list2 = [] 
+list3 =[]
 #looping to fetch the  json data
 for i in data["relations"]:
     for n in data["cis"]:
