@@ -1,0 +1,472 @@
+#!/opt/vertica/oss/python3/bin/python3
+
+import argparse
+import csv
+import datetime
+import logging
+import os
+from pprint import pprint
+
+import traceback
+import sys
+
+import vertica_python
+
+# ERRORS
+# vertica_python.errors.ConnectionError
+# vertica_python.errors.InterfaceError
+
+update_ignore = [
+    'id',
+    None,
+    '',
+]
+
+MASTER_TABLES = [
+    'accountcode',
+    'actualservice',
+    'agreement',
+    'article',
+    'assetmodel',
+    'brand',
+    'budgetcenter',
+    'category',
+    'change',
+    'company',
+    'contract',
+    'costcenter',
+    'costtype',
+    'device',
+    'device_diskdevice',
+    'device_filesystem',
+    'device_ipaddress',
+    'device_networkcard',
+    'device_runningsoftware',
+    'entitlementrule',
+    'entitymodel',
+    'externalsystem',
+    'fixedasset',
+    'fulfillmentplan',
+    'grouptargetsets',
+    'holiday',
+    'idea',
+    'incident',
+    'infrastructureperipheral',
+    'itprocessrecordcategory',
+    'license',
+    'location',
+    'offering',
+    'persongroup',
+    'person',
+    'portfolio',
+    'problem',
+    'project',
+    'proposal',
+    'recordsltstatus',
+    'request',
+    'servicecomponent',
+    'servicedefinition',
+    'stockroom',
+    'subscription',
+    'systemelement',
+    'targetdefinition',
+    'targetset',
+    'task',
+    'timeperioddefinition',
+]
+
+TRANSACTION_TABLES = [
+    'actualservicecontainsservicecomponent',
+    'actualserviceusesactualservice',
+    'agreemententitytargetset',
+    'agreementgrouptargetsets',
+    'agreementregisteredforservice',
+    'articlebaseonchange',
+    'articlebaseonincident',
+    'articlebaseonproblem',
+    'articlebaseonrelease',
+    'articlebaseonrequest',
+    'articlecoversassetmodel',
+    'articlerelatedbyarticle',
+    'articlestoreviewers',
+    'articlestoreviewgroups',
+    'articletoentitlementrules',
+    'categorytoentitlementrules',
+    'changecausedbychange',
+    'changecausedbyincident',
+    'changecausedbyproblem',
+    'changecausedbyrelease',
+    'changecausedbyrequest',
+    'companymanagedbyperson',
+    'companysites',
+    'covereddevice',
+    'coveredinfrastructureperipheral',
+    'coveredlicense',
+    'coveredperson',
+    'coveredservice',
+    'dependsonproposal',
+    'deviceaffectedbychange',
+    'deviceaffectedbyincident',
+    'deviceaffectedbyproblem',
+    'deviceaffectedbyrequest',
+    'deviceusedbyperson',
+    'device_cpu',
+    'entitymodelusedbyactualservice',
+    'fixedassetaccountedfordevice',
+    'fixedassetaccountedforinfrastructureperipheral',
+    'fixedassetaccountedforlicense',
+    'grouptargetsetsassociatedgroups',
+    'grouptargetsetsentitytargetset',
+    'grouptoperson',
+    'idearelatedtoidea',
+    'incidentcausedbychange',
+    'incidentcausedbyincident',
+    'incidentcausedbyproblem',
+    'incidentcausedbyrelease',
+    'incidentcausedbyrequest',
+    'incidentescalationmembersperson',
+    'infrastructureperipheralaffectedbychange',
+    'infrastructureperipheralaffectedbyincident',
+    'infrastructureperipheralaffectedbyproblem',
+    'infrastructureperipheralaffectedbyrequest',
+    'licenseaffectedbychange',
+    'licenseaffectedbyincident',
+    'licenseaffectedbyproblem',
+    'licenseaffectedbyrequest',
+    'offeringbundlestoofferings',
+    'offeringcoversassetmodel',
+    'offeringtoentitlementrules',
+    'optimizationcauseproposal',
+    'persontogroup',
+    'portfoliotoservicedefinition',
+    'problemcausedbychange',
+    'problemcausedbyrelease',
+    'problemcausedbyrequest',
+    'problemhasduplicate',
+    'projectcausedbychange',
+    'projectcausedbyrelease',
+    'proposalcausechange',
+    'proposalrelatedideas',
+    'relatedtodevices',
+    'relatedtoinfrastructureperipherals',
+    'releasecausedbyincident',
+    'requestcausedbychange',
+    'requestcausedbyincident',
+    'requestcausedbyproblem',
+    'requestcausedbyrequest',
+    'requestfulfilledbyactualservice',
+    'requestfulfilledbydevice',
+    'requestfulfilledbyinfrastructureperipheral',
+    'servicecomponentcontainsdevice',
+    'servicecomponentcontainssystemelement',
+    'servicecomponentusesactualservice',
+    'servicedefinitionsmexperts',
+    'servicedefinitiontoentitlementrules',
+    'stockroomservedbylocation',
+    'systemelementaffectedbychange',
+    'systemelementaffectedbyincident',
+    'systemelementaffectedbyproblem',
+    'systemelementaffectedbyrequest',
+    'systemelementcontainsdevice',
+    'tpdappliestoactualservice',
+    'tpdappliestoservicedefinition',
+    'tpdappliestosystemelement',
+    'tpdhasruleexceptions',
+    'worksatlocation',
+]
+
+NEW_ROWS_IDENTIFIER = [
+    'ADD_RELATION',
+    'ADD_ENTITY',    
+]
+
+UPDATE_ROW_IDENTIFIER = [
+    'UPDATE_ENTITY', 
+    'UPDATE_RELATION',
+]
+
+def get_db_cursor(args):
+    conn_info = {
+        'host': '127.0.0.1',
+        'port': 5433,
+        'user': args.db_user,
+        'password': args.db_pass,
+        'database': args.db,
+        # autogenerated session label by default,
+        # 'session_label': 'some_label',
+        # default throw error on invalid UTF-8 results
+        'unicode_error': 'strict',
+        # SSL is disabled by default
+        'ssl': False,
+        # using server-side prepared statements is disabled by default
+        'use_prepared_statements': False,
+        # connection timeout is not enabled by default
+        # 5 seconds timeout for a socket operation (Establishing a TCP connection or read/write operation)
+        'connection_timeout': 5,
+        'backup_server_node': ['15.120.115.182', '15.120.115.183']
+    }
+
+    # conn_info = {
+    #     'host': '127.0.0.1',
+    #     'port': 5433,
+    #     'user': 'dbadmin',
+    #     'password': 'DXCMFI@123',
+    #     'database': 'MFIITSMREPORTING',
+    #     # autogenerated session label by default,
+    #     # 'session_label': 'some_label_1',
+    #     # default throw error on invalid UTF-8 results
+    #     'unicode_error': 'strict',
+    #     # SSL is disabled by default
+    #     'ssl': False,
+    #     # using server-side prepared statements is disabled by default
+    #     'use_prepared_statements': False,
+    #     # connection timeout is not enabled by default
+    #     # 5 seconds timeout for a socket operation (Establishing a TCP connection or read/write operation)
+    #     'connection_timeout': 5,
+    #     'backup_server_node': ['15.120.115.182', '15.120.115.183'],
+    #     # 'connection_load_balance': True
+
+    # }
+    # pprint(conn_info)
+    connection  = vertica_python.connect(**conn_info)
+    return connection
+
+def read_csv(file_):
+    """ Reads CSV data and convert to dict"""    
+    with open(file_, encoding='utf-8') as fd:
+        csvreader = csv.DictReader(fd)
+        return [row for row in csvreader]
+
+def remove_bisync_cols(row):
+    if 'RowId' in row:
+        row.pop('RowId')
+    if 'BiSyncOperation' in row:
+        row.pop('BiSyncOperation')
+    return row
+
+
+def get_args():
+    """ Process arguments """
+    parser = argparse.ArgumentParser(description='Process CSV files and insert to DV')
+    parser.add_argument('csv_files_dir',
+                        help='Folder Path of CSV Files')
+    parser.add_argument('schema',
+                        help='schema name')    
+    parser.add_argument('db',
+                        help='Database name')
+    parser.add_argument('db_user',
+                        help='DB username')
+    parser.add_argument('db_pass',
+                        help='DB password')
+    return parser.parse_args()
+
+
+def insert_data_to_db(cursor, headers, csv_file, table, args):    
+    # connection    = get_db_cursor(args)
+    # cursor        = connection.cursor()
+    # file_       = csv_file.replace('.csv', '_new.csv')
+    columns     = ', '.join(header for header in headers)
+
+    cmd = f"COPY {args.schema}.{table}({columns}) FROM '{csv_file}' PARSER fcsvparser(type='traditional', delimiter=',')"
+
+    logging.info(f'Executing command "{cmd}"')
+    cursor.execute(cmd)
+    logging.info(f'Inserted {cursor.fetchone()[0]} records')
+    return True
+
+def get_columns_for_update(column, value):
+    if isinstance(value, str):
+        value = value.replace('\'', '\"')
+    return f"{column}='{value}'"
+    
+
+def update_records(cursor, rows, table, args):    
+    headers = list(rows[0].keys())
+
+    for row in rows:
+        row_lower = dict((k.lower(), v) for k, v in row.items())            
+        values = ', '.join(get_columns_for_update(key, val) for key, val in row_lower.items() if key not in update_ignore)
+
+        record_id = row_lower.get('id')
+
+        if record_id:
+            logging.info(f'Updating record with id {record_id}')
+            cmd = f"UPDATE {args.schema}.{table} SET {values} WHERE id='{record_id}'"
+            logging.info(f'Executing command "{cmd}"')
+            cursor.execute(cmd)
+            logging.info(f'{cursor.fetchone()[0]} record(s) updated')
+        else:
+            logging.warning("ID not found in csv, ignoring record")
+
+
+def identify_new_and_update_row(rows):
+    new_rows = []
+    update_rows = []
+    for row in rows:
+        if 'BiSyncOperation' in row:
+            if row['BiSyncOperation'] in NEW_ROWS_IDENTIFIER:
+                new_rows.append(row)
+            elif row['BiSyncOperation'] in UPDATE_ROW_IDENTIFIER:
+                update_rows.append(row)
+        else:
+            new_rows.append(row)
+    return new_rows, update_rows
+
+
+def create_new_rows_csv(rows, csv_file):
+    filename = os.path.basename(csv_file).replace('.csv', '_new.csv')
+    file_    = os.path.join('/tmp', filename)
+    headers  = list(rows[0].keys())
+    with open(file_, 'w', encoding='utf-8', newline='') as fd:
+        writer = csv.DictWriter(fd, fieldnames=headers)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(dict(row))
+
+    return file_
+
+def process_csv(csv_file, table, cursor, table_type, args):
+    logging.info(f'{"#" * 15}  {table}  {"#" * 15}')
+    logging.info(f'Reading CSV: {csv_file}')
+    rows = read_csv(csv_file)
+    logging.info(f'{len(rows)} records found')
+        
+    if len(rows) > 0:        
+
+        new_rows, update_rows = identify_new_and_update_row(rows)
+
+        logging.info(f'{len(new_rows)} new entries found')
+        logging.info(f'{len(update_rows)} update entries found')
+
+        logging.info(f'Removing BI Sync Headers')
+        new_rows = list(map(remove_bisync_cols, new_rows))
+        update_rows = list(map(remove_bisync_cols, update_rows))
+
+        
+
+        if len(new_rows) > 0:                        
+            headers = list(new_rows[0].keys())
+            headers = [header for header in headers if header.strip()]
+            logging.info('Creating New CSV file')
+            new_csv_file = create_new_rows_csv(new_rows, csv_file)
+            insert_data_to_db(cursor, headers, new_csv_file, table, args)
+            logging.info(f'Delete new csv_file: {new_csv_file}')
+            os.remove(new_csv_file)
+
+        if len(update_rows) > 0:
+            headers = list(update_rows[0].keys())
+            headers = [header for header in headers if header.strip()]
+            if table_type == 'transaction':
+                logging.info('Creating Updated CSV file')
+                update_csv_file = create_new_rows_csv(update_rows, csv_file)
+                insert_data_to_db(cursor, headers, update_csv_file, table, args)
+
+            elif table_type == 'master':
+                logging.info(f'Updating records')
+                update_records(cursor, update_rows, table, args)            
+    else:
+        logging.info('No records found in csv file')
+
+
+def main():
+    logging.basicConfig(
+        # filename='/home/dbadmin/logs/db_sync.log',
+        # filemode='a',
+        level=logging.DEBUG,
+        format="%(asctime)s:%(levelname)s:%(message)s"
+    )
+
+    args = get_args()
+    logging.info(f'Setting CSV field size to {sys.maxsize}')
+    csv.field_size_limit(sys.maxsize)
+    
+    logging.info(f"Searching CSV files in folder: {args.csv_files_dir}")
+
+    try:
+        files = os.listdir(args.csv_files_dir)
+    except FileNotFoundError:
+        logging.error(f'No such directory: {args.csv_files_dir}')
+        exit(1)
+    except Exception as e:
+        logging.error(f'An error occured while listing files from dir: {args.csv_files_dir}')
+        logging.error(e)
+        logging.error(traceback.format_exc())
+        exit(1)
+    
+    
+    files.sort()
+    file_table_mapping = []
+
+    for file_ in files:
+        if file_.endswith('.csv'):
+            _last_index = file_.rfind('_')
+            file_table_mapping.append({
+                    'table': file_[:_last_index].lower(),
+                    'file': os.path.join(args.csv_files_dir, file_)
+                })
+
+    logging.info(f'Total {len(files)} csv files found in dir {args.csv_files_dir}')    
+    
+    logging.info('Initiating DB connection')
+    connection  = get_db_cursor(args)
+    cursor      = connection.cursor()
+    
+    success_list = []
+    failure_list = []
+
+    for mapping in file_table_mapping:
+
+        if mapping['table'] in MASTER_TABLES:
+            table_type = 'master'
+        elif mapping['table'] in TRANSACTION_TABLES:
+            table_type = 'transaction'
+        else:
+            logging.error(f'Unable to find the table type of table: {mapping["table"]}')
+            failure_list.append(mapping['file'])
+            continue
+            # exit(1)
+
+        try:
+            process_csv(
+                mapping['file'],
+                mapping['table'],
+                cursor,
+                table_type,
+                args
+            )
+            success_list.append(os.path.basename(mapping['file']))
+        except Exception as e:
+            logging.error(f'An error occured while processing csv {mapping["file"]}')
+            logging.error(traceback.format_exc())        
+            failure_list.append(os.path.basename(mapping['file']))
+
+    logging.info('Closing DB connection')
+    connection.close()
+
+    logging.info('------SUMMARY-------')
+    # print('------SUMMARY-------')
+    # logging.info(f'Successfull CSV list: {len(success_list)}')
+
+    logging.info('-----Successfull START----')    
+    logging.info(f'Successfull CSV list: {len(success_list)}')
+
+    if len(success_list) > 0:        
+        # logging.info('\n'.join(success_list))
+        logging.info('\n'.join(success_list))
+
+    logging.info('-----Successfull END----')
+
+    # logging.info(f'Failure CSV list: {len(failure_list)}')
+    logging.info('-----Failure START----')
+    logging.info(f'Failure CSV list: {len(failure_list)}')
+
+    if len(failure_list) > 0:        
+        # logging.info('\n'.join(failure_list))
+        logging.info('\n'.join(failure_list))
+        exit(1)
+
+if __name__ == '__main__':
+    main()
+
+
+# ./DXC_MFI_ITSM_REPORTING_InsertToVertica.py "/home/dbadmin/scripts/AccountCode_0.csv" "DXC_MFI_ITSM_REPORTING" "accountcode" "master" "initial" "MFIITSMREPORTING" "dbadmin" "DXCMFI@123"
